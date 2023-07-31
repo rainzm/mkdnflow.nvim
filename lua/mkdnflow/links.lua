@@ -148,7 +148,8 @@ M.getLinkPart = function(link_table, part)
                 auto_link = '<.-(#.-)>',
             },
         }
-        local get_from = { -- Table of functions by link type
+        local get_from = {
+            -- Table of functions by link type
             md_link = function(part_)
                 local part_start_row, part_start_col, part_end_row, part_end_col, match, rematch_lines =
                     utils.mFind(match_lines, patterns[part_]['md_link'], start_row, nil, start_col)
@@ -786,7 +787,9 @@ M.formatLink = function(text, source, part)
     elseif not source then
         path_text = M.transformPath(text)
         -- If no path_text, end here
-        if not path_text then return end
+        if not path_text then
+            return
+        end
         if not links.implicit_extension then
             path_text = path_text .. '.md'
         end
@@ -821,6 +824,7 @@ M.createLink = function(from_clipboard)
     local mode = vim.api.nvim_get_mode()['mode']
     -- Get the cursor position
     local position = vim.api.nvim_win_get_cursor(0)
+    local char_position = vim.fn.getcursorcharpos(0)
     local row = position[1]
     local col = position[2]
     -- If the current mode is 'normal', make link from word under cursor
@@ -843,6 +847,9 @@ M.createLink = function(from_clipboard)
             end
             vim.cmd('startinsert')
         else
+            -- Use the charactor index
+            row = char_position[2]
+            col = char_position[3]
             -- Get the word under the cursor
             local cursor_word = vim.fn.expand('<cword>')
             -- Make a markdown link out of the date and cursor
@@ -853,7 +860,9 @@ M.createLink = function(from_clipboard)
                 replacement = M.formatLink(cursor_word)
             end
             -- If there's no replacement, stop here
-            if not replacement then return end
+            if not replacement then
+                return
+            end
             -- Find the (first) position of the matched word in the line
             local left, right = utf8.find(line, cursor_word, nil, true)
             -- Make sure it's not a duplicate of the word under the cursor, and if it
@@ -866,32 +875,35 @@ M.createLink = function(from_clipboard)
             else
                 left, right = col + 1, col
             end
+            local newLine = utf8.sub(line, 0, left - 1)
+                .. replacement[1]
+                .. utf8.sub(line, right + 1, -1)
             -- Replace the word under the cursor w/ the formatted link replacement
-            vim.api.nvim_buf_set_text(0, row - 1, left - 1, row - 1, right, replacement)
-            vim.api.nvim_win_set_cursor(0, { row, col + 1 })
+            vim.api.nvim_buf_set_lines(0, row - 1, row, false, { newLine })
+            vim.fn.setcursorcharpos({ row, col + 1 })
         end
-    -- If current mode is 'visual', make link from selection
+        -- If current mode is 'visual', make link from selection
     elseif mode == 'v' then
+        row = char_position[2]
+        col = char_position[3]
         -- Get the start of the visual selection (the end is the cursor position)
-        local first = vim.fn.getpos('v')
+        local first = vim.fn.getcharpos('v')
         -- If the start of the visual selection is after the cursor position,
         -- use the cursor position as start and the visual position as finish
         local inverted = first[3] > col
-        local start = (inverted and { row - 1, col }) or { first[2] - 1, first[3] - 1 + first[4] }
-        local finish = (inverted and { first[2] - 1, first[3] - 1 + first[4] }) or { row - 1, col }
-        local start_row = (inverted and row - 1) or first[2] - 1
-        local start_col = (inverted and col) or first[3] - 1
-        local end_row = (inverted and first[2] - 1) or row - 1
-        local end_col = (inverted and first[3]) or col + 1
-        local region =
-            vim.region(0, start, finish, vim.fn.visualmode(), (vim.o.selection ~= 'exclusive'))
-        local lines = vim.api.nvim_buf_get_lines(0, start[1], finish[1] + 1, false)
-        lines[1] = lines[1]:sub(region[start[1]][1] + 1, region[start[1]][2])
+        local start = (inverted and { row, col }) or { first[2], first[3] + first[4] }
+        local finish = (inverted and { first[2], first[3] + first[4] }) or { row, col }
         if start[1] ~= finish[1] then
-            lines[#lines] = lines[#lines]:sub(region[finish[1]][1] + 1, region[finish[1]][2])
+            vim.api.nvim_echo(
+                { { 'Multi-line links are not supported for the time being.' } },
+                true,
+                {}
+            )
+            return
         end
+        local line = vim.api.nvim_get_current_line()
         -- Save the text selection & replace spaces with dashes
-        local text = table.concat(lines)
+        local text = utf8.sub(line, start[2], finish[2])
         local replacement
         if from_clipboard then
             replacement = M.formatLink(text, vim.fn.getreg('+'))
@@ -899,13 +911,18 @@ M.createLink = function(from_clipboard)
             replacement = M.formatLink(text)
         end
         -- If no replacement, end here
-        if not replacement then return end
+        if not replacement then
+            return
+        end
+        local newLine = utf8.sub(line, 0, start[2] - 1)
+            .. replacement[1]
+            .. utf8.sub(line, finish[2] + 1, -1)
         -- Replace the visual selection w/ the formatted link replacement
-        vim.api.nvim_buf_set_text(0, start_row, start_col, end_row, end_col, replacement)
+        vim.api.nvim_buf_set_lines(0, row - 1, row, false, { newLine })
         -- Leave visual mode
         vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes('<esc>', true, false, true), 'x', true)
         -- Retain original cursor position
-        vim.api.nvim_win_set_cursor(0, { row, col + 1 })
+        vim.fn.setcursorcharpos({ row, col + 1 })
     end
 end
 
